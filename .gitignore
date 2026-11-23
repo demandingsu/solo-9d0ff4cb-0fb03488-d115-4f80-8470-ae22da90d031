@@ -1,4 +1,7 @@
 .venv/
+.pylibs/
+.pipcache/
+scratch/
 __pycache__/
 *.pyc
 .pytest_cache/

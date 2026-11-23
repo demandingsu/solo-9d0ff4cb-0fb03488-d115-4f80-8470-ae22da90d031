@@ -59,7 +59,10 @@ app = FastAPI(
         "P50/P95/总耗时分别能否由 **同一组读数** 在两种取位口径下复算：\n\n"
         "- `ceil` 口径：排序后第 ⌈pN⌉ 项\n"
         "- `floor` 口径：排序后第 ⌊pN⌋ 项（均至少取第 1 项）\n\n"
-        "可行时返回可独立复算的「耗时→笔数」见证分布。"
+        "可行时返回可独立复算的「耗时→笔数」见证分布。\n\n"
+        "**班报换档（PUT 覆盖）语义**：已有明细按实际耗时自动归入本终端的新档，"
+        "流水号与耗时原样保留；有明细找不到新档、或某终端归入一档的笔数超过"
+        "班报所报笔数时，整次更正退回（422），继续沿用原班报与原明细。"
     ),
     lifespan=lifespan,
 )
@@ -70,18 +73,17 @@ def _db() -> Database:
 
 
 @app.put("/shifts/{shift_id}/report",
-         summary="登记/覆盖一班的分档笔数与班报分位数、总耗时")
+         summary="登记/覆盖一班的分档笔数与班报分位数、总耗时（换档自动重映射明细）")
 def put_report(shift_id: str, body: ShiftReportIn):
-    payload = body.model_dump()
     try:
-        service.validate_report(payload)
-        _db().upsert_report(shift_id, payload)
+        # 覆盖班报时在同一事务内按新分档重映射已有明细；
+        # 任一明细找不到新档或超档内容量即整次更正退回（422，原状态不变）。
+        return service.apply_report(
+            _db(), shift_id, body.model_dump())
     except service.ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors)
-    if _db().has_details(shift_id):
-        return {"shift_id": shift_id, "replaced": True,
-                "warning": "已有明细将按新班报重新校验，建议重新核对"}
-    return {"shift_id": shift_id, "replaced": True}
+        raise HTTPException(
+            status_code=422,
+            detail={"rejected": True, "errors": exc.errors})
 
 
 @app.post("/shifts/{shift_id}/details",
